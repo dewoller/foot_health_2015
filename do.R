@@ -1,7 +1,30 @@
 library(plyr)
 ################################################################################
-
-#############################################################################
+processDirectory= function( 
+			   path = "data/"
+			   , 
+			   pattern = '*.csv'
+			   , 
+			   searchPattern="^([A-Z]+)_.*"
+			   ) {
+    files =data.frame(list.files( path, pattern));
+    names(files)=c("filename");
+    files$base = gsub(searchPattern, "\\1", files$filename);
+    files$fullPath= paste(path, files$filename, sep="");
+  processFiles( files);
+}
+##############################################################################
+processFilesFromCSV = function(basePath="~/mydoc/research/noraShields/carlon/",
+                               file="temp.csv" 
+) {
+  # gather all the files
+  
+  files=read.csv(paste(basePath, file, sep=""),stringsAsFactors=FALSE)
+  files$base=gsub("^DS_PRT_trial_(.*)_files_for_Dennis$","\\1",files$base,perl=TRUE)
+  files$fullPath=paste(basePath, files$filename, sep="")
+  processFiles(files)
+}
+############################################################################
 processFiles= function( files ) {
   rv=list()
   
@@ -33,17 +56,6 @@ processFiles= function( files ) {
 }
 
 #############################################################################
-#############################################################################
-processFilesFromCSV = function(basePath="~/mydoc/research/noraShields/carlon/",
-                               file="temp.csv" 
-) {
-  # gather all the files
-  
-  files=read.csv(paste(basePath, file, sep=""),stringsAsFactors=FALSE)
-  files$base=gsub("^DS_PRT_trial_(.*)_files_for_Dennis$","\\1",files$base,perl=TRUE)
-  files$fullPath=paste(basePath, files$filename, sep="")
-  processFiles(files)
-}
 
 #############################################################################
 `processOneFile` = function( file) {
