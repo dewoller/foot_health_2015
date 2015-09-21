@@ -1,369 +1,214 @@
 library(plyr)
 ################################################################################
-processDirectory= function( 
-			   path = "data/"
-			   , 
-			   pattern = '*.csv'
-			   , 
-			   searchPattern="^([A-Z]+)_.*"
-			   ) {
-    files =data.frame(list.files( path, pattern));
-    names(files)=c("filename");
-    files$base = gsub(searchPattern, "\\1", files$filename);
-    files$fullPath= paste(path, files$filename, sep="");
-  processFiles( files);
-}
-##############################################################################
-processFilesFromCSV = function(basePath="~/mydoc/research/noraShields/carlon/",
-                               file="temp.csv" 
-) {
-  # gather all the files
-  
-  files=read.csv(paste(basePath, file, sep=""),stringsAsFactors=FALSE)
-  files$base=gsub("^DS_PRT_trial_(.*)_files_for_Dennis$","\\1",files$base,perl=TRUE)
-  files$fullPath=paste(basePath, files$filename, sep="")
-  processFiles(files)
-}
-############################################################################
-processFiles= function( files ) {
+source("func.R")
+
+
+instructions="
+
+The issue with the way we summarised the data before is that we do not
+calculate a per day amount of time unless we go back and manually count the lines per day. 
+So I'd like to be able for every eligible day's data to measure 
+(1) the total amount of minutes the person spent in 
+    moderate or vigorous level physical activity and 
+(2) the amount of time spent in moderate or vigorous level physical activity 
+    in bouts of at least 10 minutes.
+
+So it's almost like we would have the above analysis for each eligible day of data ie 
+The threshold was 275 (moderate level of physical activity or above)
+Count of lines read  XXX (eligible time in a day when monitor was worn)
+Count above threshold XXX 
+  (total amount of at least moderate level physical activity 
+    the participant did in that time)
+Count above threshold in bouts of at least 10 minutes 
+  (allowing for up to 2 minutes of readings below 275 in a bout)
+Then we would re-run this for each eligible day of data collection 
+  (between 4 and 7 readings for each participant- 
+  we can discard the very first day of data collection as it is unlikely to be a 
+  full days data anyway and was designed as a familiarisation day). 
+  so for each participant we would have a line in an excel spreadsheet with 
+  headings sometime like what Ive attached to this email. 
+
+When we have the data per day, 
+we can then calculate the average per day 
+but also the variability within daily activity (which I think will be high).
+
+initial output columns:
+#############################################################################
+Participant  
+Week (0/11/24)	
+Compliant Day	
+Threshold	
+total or 10 minute bouts	
+Value
+
+#############################################################################
+for each participant file
+clean data
+for each day
+for each threshold
+classify into 10 minute bouts
+total value and 10 minute bouts
+
+#############################################################################
+
+"
+processFilesNora = function(
+  basePath="~/mydoc/research/noraShields/projects/for_tech/"
+  ,
+  fileNameCSV="files2Process.csv"
+  ,
+  defaultDateFormat="%m/%d/%Y"
+  ) {
   rv=list()
   
-  sBouts=c(5,10,20)
-  eBouts=c(9,19,9999999999)
-  fileLevelSummaries=list()
+  
+  files=read.csv(paste(basePath, fileNameCSV, sep=""),stringsAsFactors=FALSE, header=FALSE, col.names=c("filename"))
+ 
+  files$base=files$filename
+  files$chunk=files$filename
+  files$fullPath=paste(basePath, files$filename, sep="")
+  thresholds=c(247,275,302,832,926,1018)
+  peopleRows=list()
   dayDetails=data.frame()
   for(i in 1:length(files[,1])){
-    #browser()
-    
-    fileLevelSummary = processOneFile( files[i,] )
-    fileLevelSummary=c(fileLevelSummary, files[i,])
-    fileLevelSummaries=rbind(fileLevelSummaries, fileLevelSummary)
-    if(!fileLevelSummary$isCompliant)
-      next  # ignore it, skip to next data set
-    
-    #____________________________________________________________________________
-    baseDataset=subset(fileLevelSummary$csv, subset=fileLevelSummary$csv$isCompliant)
-    dayDetail = processFileDays( baseDataset, person=files[i,]$chunk, periodType=files[i,]$base, sBouts=sBouts, eBouts=eBouts)
-    dayDetails=rbind(dayDetails, dayDetail)
-
-    
-    #_
+    print(paste("processing row",i,files[i,]$fullPath))
+    # process this file
+    df = defaultDateFormat
+    if ("Reverse" %in% names(files)) {
+      if( files[i,]$Reverse == "R") {
+        df= "%m/%d/%Y" 
+      } else {
+        df="%d/%m/%Y"
+      }
+    }
+    csv = readCountsDataRT3(files[i,]$fullPath , df )
+    fileRow= markCompliant(csv, files[i,]$fullPath)
+    fileRow$fileIndex=i  
+    fileRow$filename=files[i,]$filename
+    peopleRows=rbind(peopleRows, fileRow)
+    if(!fileRow$isCompliant)
+      next
+    baseDataset=fileRow$csv
+    for(j in 1: length(thresholds)){
+      print(paste("Threshold", thresholds[j]))
+      # find all active blocks
+      dataset=activeBlock(baseDataset, thresholds[j], frame=10, cts="counts", 
+                          allowanceFrame=2, newColNameIsBlock="isBlock")
+      blocksPerDay=ddply(dataset[dataset$isBlock & 
+                                  dataset$isCompliant & 
+                                   dataset$isWearing,], .(day), nrow)
+      
+      # check to make sure we got some data.  
+      if(length(blocksPerDay[,1]) > 0) {
+        # add some more descriptive columns onto this
+        blocksPerDay=cbind(blocksPerDay, 
+                           files[i,]$chunk,
+                           "dayTotalTenMinute",
+                           files[i,]$base,
+                           thresholds[j]
+                           )
+        names(blocksPerDay)=c("day","count","person","measureType","periodType", "threshold")
+        dayDetails = rbind(dayDetails, blocksPerDay)
+      }
+      activePerDay=ddply(dataset[dataset$counts>=thresholds[j] & 
+                                   dataset$isCompliant & 
+                                   dataset$isWearing,], .(day), nrow)
+      if(length(activePerDay[,1]) > 0) {
+        activePerDay=cbind(activePerDay, 
+                           files[i,]$chunk,
+                           "dayTotal",
+                           files[i,]$base,
+                           thresholds[j]
+                           )
+        names(activePerDay)=c("day","count","person","measureType","periodType","threshold")
+        dayDetails = rbind( dayDetails,  activePerDay)
+      }
+    }
   }
-  rv$fileLevelSummaries=fileLevelSummaries
+  rv$peopleRows=peopleRows
   rv$dayDetails=dayDetails
   rv$files=files
-  rv
+  write.csv.Nora(rv, basename="/tmp/output")
+  return(rv)
 }
 
 #############################################################################
-
 #############################################################################
-`processOneFile` = function( file) {
-  
-  print(paste("processing row",file$fullPath))
-  
-  # process this file;  first, see if it is compliant
-  fileLevelSummary= markCompliant(file$fullPath,
-                                  minuteThreshold=9*60 # number of minutes for a day to be compliant
-                                  ,
-                                  frame=60
-                                  , 
-                                  allowanceFrame=2  # number of minutes allowed
-                                  ,
-                                  dayThreshold=4
-                                  ,
-                                  weekendDayThreshold=0
-  )               
-  
-  fileLevelSummary$filename=file$filename
-  fileLevelSummary = within( fileLevelSummary, {
-    NumberActiveMinutes =  sum( csv$isCompliant & csv$isWearing )
-    totalActiveVM =  sum(csv[ csv$isCompliant & csv$isWearing, ]$counts)
-    AverageVM =  totalActiveVM / NumberActiveMinutes
-  })
-  fileLevelSummary  
-}
-
 #############################################################################
-`processBoutByDay` = function( baseDataset, person, periodType, sBout, eBout=99999999, level=40, label="") {
 
-  dayDetails = data.frame()
-  # find all active blocks for this threshold
-  thisDataset=activeBlock(baseDataset, activityLevelBottom=level, 
-                          frame=sBout, frameMax=eBout, cts="counts", 
-                          allowanceFrame=2)
-  
-  # find the number of blocks for each day in the dataset
-  chunks = unique(subset(thisDataset, 
-                         select=c("day","chunkID"),
-                         subset= thisDataset$isBlock & 
-                                 thisDataset$isCompliant & 
-                                 thisDataset$isWearing))
-  dayDetail=ddply(chunks, .(day), summarise, N=length(day))
-  
-  # add in columns to identify these  day block counts, one record / day
-  dayDetail=cbind(dayDetail, 
-                  person,
-                  paste("day-", sBout, "min",label,"-count", sep=""),
-                  periodType
-  )
-  names(dayDetail)=c("day","count","person","measureType","periodType")
-  # append these blocks to the accumulative daydetails
-  dayDetails = rbind(dayDetails, dayDetail)
+processFilesStaceyCarlon= function(
+  basePath="~/mydoc/research/noraShields/carlon/"
+  ,
+  fileNameCSV="files2Process.csv"
+  ) {
+  rv=list()
   
   
-  # find the average count for this period
-  dayDetail = ddply(subset(thisDataset, 
-                           subset= thisDataset$isBlock & 
+  files=read.csv(paste(basePath, fileNameCSV, sep=""),stringsAsFactors=FALSE)
+  files$base=gsub("^DS_PRT_trial_(.*)_files_for_Dennis$","\\1",files$base,perl=TRUE)
+  files$fullPath=paste(basePath, files$filename, sep="")
+  threshold_bottom=c(0,41,951)
+  threshold_top=c(40,950,100000000)
+  peopleRows=list()
+  dayDetails=data.frame()
+  for(i in 1:length(files[,1])){
+    print(paste("processing row",i,files[i,]$fullPath))
+    # process this file
+    fileRow= markCompliant(files[i,]$fullPath,
+             minuteThreshold=540 # number of minutes for a day to be compliant
+                           ,
+                           frame=60
+                           , 
+                           allowanceFrame=2  # number of minutes allowed
+                           ,
+                           dayThreshold=4
+    )               
+                           
+    fileRow$fileIndex=i  
+    fileRow$filename=files[i,]$filename
+    peopleRows=rbind(peopleRows, fileRow)
+    if(!fileRow$isCompliant)
+      next
+    baseDataset=fileRow$csv
+    for(j in 1: length(thresholds)){
+      print(paste("Threshold", thresholds[j]))
+      # find all active blocks
+      thisDataset=activeBlock(baseDataset, activityLevelBottom=thresholds[j], frame=10, cts="counts", 
+                          allowanceFrame=2, newColName="isBlock")
+      blocksPerDay=ddply(thisDataset[thisDataset$isBlock & 
                                    thisDataset$isCompliant & 
-                                   thisDataset$isWearing),
-                    .(day), summarise, mean=mean(counts))
-  
-  # add in columns to identify these  day block counts, one record / day
-  dayDetail=cbind(dayDetail, 
-                  person,
-                  paste("day-", sBout, "min",label,"-average", sep=""),
-                  periodType
-  )
-  names(dayDetail)=c("day","count","person","measureType","periodType")
-  # append these blocks to the accumulative daydetails
-  dayDetails = rbind(dayDetails, dayDetail)
-  dayDetails  
-}
-
-#############################################################################
-
-#############################################################################
-`processBoutByPerson` = function( baseDataset, person, periodType, sBout, eBout=99999999, level=40, label="") {
-  
-  dayDetails = data.frame()
-  # find all active blocks for this threshold
-  thisDataset=activeBlock(baseDataset, activityLevelBottom=level, 
-                          frame=sBout, frameMax=eBout, cts="counts", 
-                          allowanceFrame=2)
-  
-  # find the number of blocks for each day in the dataset
-  chunks = unique(subset(thisDataset, 
-                         select=c("day","chunkID"),
-                         subset= thisDataset$isBlock & 
-                           thisDataset$isCompliant & 
-                           thisDataset$isWearing))
-  dayDetail=ddply(chunks, .(), summarise, N=length(day))
-  
-  # add in columns to identify these  day block counts, one record / day
-  dayDetail=cbind(dayDetail, 
-                  person,
-                  paste("personPeriod-", sBout, "min",label,"-count", sep=""),
-                  periodType
-  )
-  names(dayDetail)=c("day","count","person","measureType","periodType")
-  # append these blocks to the accumulative daydetails
-  dayDetails = rbind(dayDetails, dayDetail)
-  
-  
-  # find the average count for this period
-  dayDetail = ddply(subset(thisDataset, 
-                           subset= thisDataset$isBlock & 
-                             thisDataset$isCompliant & 
-                             thisDataset$isWearing),
-                    .(), summarise, mean=mean(counts))
-  
-  # add in columns to identify these  day block counts, one record / day
-  dayDetail=cbind(dayDetail, 
-                  person,
-                  paste("personPeriod-", sBout, "min",label,"-average", sep=""),
-                  periodType
-  )
-  names(dayDetail)=c("day","count","person","measureType","periodType")
-  # append these blocks to the accumulative daydetails
-  dayDetails = rbind(dayDetails, dayDetail)
-  dayDetails  
-}
-
-
-#############################################################################
-
-#############################################################################
-calculateActivityLevel = function(counts, isWearing) {
-  brk = c(40,950)
-  a=cbind(counts, isWearing)
-  factor( 
-    apply(a, 1,function( line ) { 
-    ifelse(
-      !line[2], 
-      1, 
-      2+length(which(line[1]>brk)))
-  } )
-    , 
-   levels=seq(1,4), 
-    labels= c("nowear", "light","sedentary", "vigorous")
-  )
-}
-
-
-###########################################################
-###########################################################
-processFileDays = function( baseDataset, person, periodType, sBouts, eBouts)  {
-  
-  dayDetails=data.frame()
-  # process 5, 10 and 20 minute bouts of any level activity
-  for(j in 1: length(sBouts)){
-    print(paste("Bout length", sBouts[j], "-", eBouts[j]))
-    dayDetails=rbind(dayDetails,
-                     processBoutByDay(baseDataset, sBout=sBouts[j], eBout=eBouts[j], level=40, person=person, periodType=periodType))
-    dayDetails=rbind(dayDetails,
-                     processBoutByPerson(baseDataset, sBout=sBouts[j], eBout=eBouts[j], level=40, person=person, periodType=periodType))
+                                  thisDataset$isWearing,], .(day), nrow)
+      blocksPerDay=cbind(blocksPerDay, 
+                         files[i,]$chunk,
+                         "dayTotalTenMinute",
+                         files[i,]$base,
+                         thresholds[j]
+                         )
+      names(blocksPerDay)=c("day","count","person","measureType","periodType", "threshold")
+      dayDetails = rbind(dayDetails, blocksPerDay)
+      activePerDay=ddply(thisDataset[thisDataset$counts>=thresholds[j] & 
+                                   thisDataset$isCompliant & 
+                                   thisDataset$isWearing,], .(day), nrow)
+      activePerDay=cbind(activePerDay, 
+                         files[i,]$chunk,
+                         "dayTotal",
+                         files[i,]$base,
+                         thresholds[j]
+                         )
+      names(activePerDay)=c("day","count","person","measureType","periodType","threshold")
+        dayDetails = rbind( dayDetails,  activePerDay)
+    }
   }
-  
-  #____________________________________________________________________________
-  # process 10 minute bouts of moderate-vigorous activity
-  dayDetails=rbind(dayDetails,
-                   processBoutByDay(baseDataset, sBout=10, label="-vigorous", level=950 , person=person, periodType=periodType))
-  dayDetails=rbind(dayDetails,
-                   processBoutByPerson(baseDataset, sBout=10, label="-vigorous", level=950 , person=person, periodType=periodType))
-
-  # process overall Totals
-  dayDetails=rbind(dayDetails,
-                   processDayTotals(baseDataset, person=person, periodType=periodType))
-  dayDetails=rbind(dayDetails,
-                   processPersonPeriodTotals(baseDataset, person=person, periodType=periodType))
-
-  dayDetails
-}  
-
-###########################################################
-###########################################################
-processDayTotals = function(baseDataset, person, periodType)   {
-  dayDetails=data.frame()
-  
-  #____________________________________________________________________________
-  # categorise all the minutes into overall activity levels
-  baseDataset$activityLevel = calculateActivityLevel( baseDataset$counts, baseDataset$isWearing ) 
-  
-  dayDetail = ddply( baseDataset, .(day, activityLevel), summarise, count=length(activityLevel))
-  # calc percents
-  dayDetail1 = ddply( dayDetail, .(day), summarise, activityLevel=activityLevel, pct=count/sum(count))
-  
-  dayDetail=data.frame(
-    cbind(dayDetail$day, dayDetail$count, 
-          person,
-          paste("day-", as.character(dayDetail$activityLevel), "-mins", sep=""),
-          periodType
-  ))
-  
-  names(dayDetail)=c("day","count","person","measureType","periodType")
-  dayDetails=rbind(dayDetails, dayDetail)
-  
-  #____________________________________________________________________________
-  # get percents
-  dayDetail1=data.frame(
-    cbind(dayDetail1$day, dayDetail1$pct, 
-          person,
-          paste("day-", as.character(dayDetail1$activityLevel), "-pct", sep=""),
-          periodType
-    )
-  )
-  names(dayDetail1)=c("day","count","person","measureType","periodType") 
-  dayDetails=rbind(dayDetails, dayDetail1)
-  #____________________________________________________________________________
-  # get daily minutes wearing, and avg count while wearing, per day
-  
-  # capture the len and average
-  dayDetail1 = ddply( 
-    subset(baseDataset, subset=baseDataset$isWearing & baseDataset$isCompliant),
-    .(day), summarise, dayMin=length(day), dayAvgCnt=mean(counts) )
-  
-  # create rows for the length
-  dayDetail=data.frame(cbind(dayDetail1$day, dayDetail1$dayMin, 
-                             person,
-                             "day-wearingMins",
-                             periodType
-  )
-  )
-  names(dayDetail)=c("day","count","person","measureType","periodType") 
-  dayDetails=rbind(dayDetails, dayDetail)
-  
-  # create rows for the average
-  dayDetail=data.frame(cbind(dayDetail1$day, dayDetail1$dayAvgCnt, 
-                             person,
-                             "day-avg-cnt",
-                             periodType
-  )
-  )
-  names(dayDetail)=c("day","count","person","measureType","periodType") 
-  dayDetails=rbind(dayDetails, dayDetail)
-  dayDetails
-} 
-
-
-###########################################################
-###########################################################
-###########################################################
-###########################################################
-processPersonPeriodTotals= function(baseDataset, person, periodType)   {
-  dayDetails=data.frame()
-  
-  #____________________________________________________________________________
-  # categorise all the minutes into overall activity levels
-  baseDataset$activityLevel = calculateActivityLevel( baseDataset$counts, baseDataset$isWearing ) 
-  dayDetail = ddply( baseDataset, .(activityLevel), summarise, count=length(activityLevel))
-
-  # calc percents from above
-  dayDetail1 = ddply( dayDetail, .(), summarise, activityLevel=activityLevel, pct=count/sum(count))
-  
-  dayDetail=data.frame(
-    cbind(NA, dayDetail$count, 
-          person,
-          paste("personPeriod-", as.character(dayDetail$activityLevel), "-mins", sep=""),
-          periodType
-    ))
-  
-  names(dayDetail)=c("day","count","person","measureType","periodType")
-  dayDetails=rbind(dayDetails, dayDetail)
-  
-  #____________________________________________________________________________
-  # store percents calculated above
-  dayDetail1=data.frame(
-    cbind(NA, dayDetail1$pct, 
-          person,
-          paste("personPeriod-", as.character(dayDetail1$activityLevel), "-pct", sep=""),
-          periodType
-    )
-  )
-  names(dayDetail1)=c("day","count","person","measureType","periodType") 
-  dayDetails=rbind(dayDetails, dayDetail1)
-  #____________________________________________________________________________
-  # get daily minutes overall summaries, and avg count while wearing, per day
-  
-  # capture the len and average
-  # create rows for the length
-  wearingData = subset( baseDataset, subset=baseDataset$isWearing)
-  dayDetail=data.frame(cbind(NA, dim(wearingData)[1], 
-                             person,
-                             "personPeriod-wearingMins",
-                             periodType
-  )
-  )
-  names(dayDetail)=c("day","count","person","measureType","periodType") 
-  dayDetails=rbind(dayDetails, dayDetail)
-  
-  # create rows for the average
-  dayDetail=data.frame(cbind(NA, mean(wearingData$counts),
-                             person,
-                             "personPeriod-avg-cnt",
-                             periodType
-  )
-  )
-  names(dayDetail)=c("day","count","person","measureType","periodType") 
-  dayDetails=rbind(dayDetails, dayDetail)
-  dayDetails
-} 
+  rv$peopleRows=peopleRows
+  rv$dayDetails=dayDetails
+  rv$files=files
+  return(rv)
+}
 
 #############################################################################
 
-write.csv.Nora = function(rv, basename) {
-  # write everything but the csv column
-  write.csv( rv$fileLevelSummaries[,-9], paste(basename, "Summary.csv",sep=""))
+write.csv.Nora = function(rv, basename ) {
+  write.csv( rv$peopleRows[,which(!grepl("csv",colnames(a$peopleRows)))], paste(basename, "Summary.csv",sep=""))
   write.csv( rv$dayDetails, paste(basename, "Details.csv",sep=""))
 }
   

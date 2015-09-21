@@ -1,5 +1,6 @@
 #!/usr/bin/R
 
+
 library(plyr)
 ################################################################################
 # find a block >= than frame length that has activity higher than activity level
@@ -11,8 +12,6 @@ library(plyr)
            activityLevelTop=9999999999
            ,
            frame = 10
-           ,
-           frameMax = 99999999999 
            ,
            cts = "counts"
            , 
@@ -33,10 +32,15 @@ library(plyr)
     # length of datase
     size = dim(dataset)[1]
     
-    # default to not block, no chunk ID
+    # default to not block
     isBlock = rep(FALSE, size)
     chunkID = rep(0, size)
     
+    #ct1_bool = (ct >= activityLevelBottom & ct <= activityLevelTop)
+    #chunks0=findContigiousChunks( !ct1_bool )
+  
+    # chunks1 are not blocks if they are less than frame long
+    # chunks0 are chunk1 if they are less than allowanceFrame long
     
     # for each recording
     startPos=-1
@@ -44,6 +48,7 @@ library(plyr)
     chunkStart=c()
     chunkEnd=c()
     inChunk=FALSE
+    lastGoodReading=-1
 
     # for every record on file
     for(i in 1:length(ct)) {
@@ -55,6 +60,7 @@ library(plyr)
           startPos=i
           inChunk=TRUE
         }  
+        lastGoodReading=i
       } else {    
 
         # it is a bad reading
@@ -65,12 +71,11 @@ library(plyr)
             lowReadings = lowReadings+1
           } else {
             
-            # we have gone past our limit, we are at the end of the chunk
+            # we are at the end of the chunk
             endPos=i-1
-            chunkLength =  endPos-startPos+1 
-            if ( chunkLength >= frame && chunkLength <= frameMax) {
+            if (endPos-startPos+1 >= frame) {
               
-              # the chunk is compliant, store it away
+              # the chunk is long enough, store it away
               chunkStart=c(chunkStart, startPos)
               chunkEnd=c(chunkEnd, endPos)
             }
@@ -140,9 +145,6 @@ dataCollapser= function (dataset, TS="TimeStamp", by=60, col="counts")
 ############################################################################
 ############################################################################
 ############################################################################
-# findContigiousChunks` <-
-# find contigious true values in ct_bool
-# returns dataframe of startpos, endpos, and allowancewin (windowlength)
 
 `findContigiousChunks` <-
   function(ct_bool)
@@ -178,20 +180,29 @@ dataCollapser= function (dataset, TS="TimeStamp", by=60, col="counts")
 
 ################################################################################
 ################################################################################
-markDays = function (dataset, timestamp = "TimeStamp", startTime = "00:00:00", endTime = "23:59:59") 
+markDays = function (dataset
+,
+ timestamp = "TimeStamp"
+,
+ startTime = "00:00:00"
+,
+ endTime = "23:59:59"
+) 
 {
   if (is.numeric(timestamp)) {
     cadval = dataset[, timestamp]
-  }
-  else {
+  } else {
     cadval = dataset[, c(names(dataset) == timestamp)]
   }
-  daystart = as.POSIXlt(paste(substring(as.POSIXlt(cadval[1]), 
-                                        1, 10), startTime))
+
+  daystart = as.POSIXlt(
+    format(cadval[10], "%Y-%m-%d 00:00:00")
+    , format="%Y-%m-%d %H:%M:%S")
+
+   dayMarking = as.numeric(floor(difftime(cadval, daystart, units="days"))+1)
   
-  dayMarking = floor(as.integer(cadval-daystart)/24)+1
-  
-  return(dayMarking)
+  temp = cbind(dataset, day = dayMarking)
+  return(temp)
   
 }
 # we need to find if chunks1 are inactive enough to be called inactive
@@ -221,19 +232,18 @@ markDays = function (dataset, timestamp = "TimeStamp", startTime = "00:00:00", e
 
 
 ################################################################################
-`markWearing` <-
+`markWearingNora` <-
   
   function(dataset, 
-           frame = 60, 
-           cts = "counts", 
-           allowanceFrame= 3, 
-           newColName = "isWearing")
+           frame = 60
+           , 
+           cts = "counts"
+           , 
+           allowanceFrame= 3
+           , 
+           newColName = "isWearing"
+           )
   {
-  
-    # algorithm
-    # find all the completely non wearing <10
-    # find all the possibly non-wearing 10-100
-    # for this latter set, if they are less than allowanceFrame long, mark them as completely non-wearing
     
     # get the count vector
     ct = as.vector(dataset[,names(dataset) == cts])
@@ -247,43 +257,47 @@ markDays = function (dataset, timestamp = "TimeStamp", startTime = "00:00:00", e
     # default to not wearing
     wearing = rep(TRUE, size)
     
-    #find the minutes which are possibly inactive
+    #find the minutes which are possibly inactive 
+    # as opposed to definitely inactive or definitely active
+    # get rid of the 'maybe' case first
     notActiveLimit=10
     activeLimit=100
-    
-    ct0_bool = ct < notActiveLimit
     chunks1=findContigiousChunks( (ct <activeLimit) & (ct>=notActiveLimit) )
 
-    # chunks0 are inactive if they are 60 minutes long
+  # chunks0 are inactive if they are 60 minutes long
     # chunks1 are chunk0 if they are less than 3 long
     
-    # for each possibly active chunk, chunks1, put it 
+    #ct0_bool = vector of nodes definitely inactive
+    ct0_bool = ct < notActiveLimit
+
+    # for each possibly inactive chunks, if it is short enough 
+    # mark it as inactive
     for(r in 1:length(chunks1$allowancewin))
     {
-      #   If length < 3
-      if(chunks1$allowancewin[r] <= allowanceFrame) {
-        #cat(r, " ",  chunks1$startPos[r], " ",chunks1$endPos[r], "\n")
+      #   If short enough
+     #     make this chunk inactive in ct0_bool
+      if (chunks1$allowancewin[r] <= allowanceFrame) {
         ct0_bool[ chunks1$startPos[r]:chunks1$endPos[r]] = TRUE
       }
     }
 
-    #     make this chunk inactive in ct0_bool
-    # now that we have final set of non-wearing,  we can find the real non wearing chunks
-    # that is, contigious chunks in chunks0
+    # find contigious periods of inactivity, both real and theorized
+    # get rid of all the chunks that are too short
+    # chunks in chunks0
     chunks0=findContigiousChunks(ct0_bool)
     # for each chunks0
     for(r in 1:length(chunks0$allowancewin))
     {
-      #   delete chunks that are too short, that is, if length(chunk) < frame length
+      # mark as inactive if long enough
+      #   delete chunk if length(chunk) < 60
       if(chunks0$allowancewin[r] < frame) {
         chunks0$startPos[r] = -1
       }
     }
-
-    # get rid of all the chunks that are too short, that we eliminated above
+    #
+    # find active chunks, the inverse of chunks1
     chunks0 = chunks0[ chunks0$startPos>0, ]
     
-    # mark as non wearing as all the chunks found above
     for(w in 1: length(chunks0$endPos)){
       wearing[chunks0$startPos[w]:chunks0$endPos[w]] = FALSE 
     }
@@ -298,6 +312,155 @@ markDays = function (dataset, timestamp = "TimeStamp", startTime = "00:00:00", e
 
 
 
+
+
+################################################################################
+`OLDmarking` <-  # changed from marking to make sure no one is using this old code
+  function(dataset, 
+           frame=60, 
+           cts = "counts", 
+           streamFrame = 90, 
+           allowanceFrame= 2, 
+           newColName = "wearing",
+           zeroLevel = 10)
+    {
+    
+    # get the count vector
+    ct = as.vector(dataset[,names(dataset) == cts])
+    
+    if(is.null(streamFrame)){
+      streamFrame = round(0.5*frame)
+    }
+    
+    #all the NA's in the original counts data will be treated as 0 counts
+    ct1 = ct
+    ct[is.na(ct)] = 0
+    
+    # length of dataset
+    size = dim(dataset)[1]
+    
+    # default to not wearing
+    wearing = rep("nw", size)
+    
+    #find the minutes which have counts
+    ct_bool = ct > zeroLevel 
+    
+    # find me ALL the indexes in dataset where there is a value
+    rowPos = nthOccurance (dataVct = ct_bool, value= TRUE)
+    
+    #getting section start and end positions
+    startpos = rowPos[1]
+    endpos = c()
+    
+    # traverse all the existing values, finding contigious chunks where there are values
+    # store values in opposing values in startpos, endpos
+    for(q  in 2: (length(rowPos)))
+    {
+      if( rowPos[q] - rowPos[q-1]>1 )
+      {
+        # if there is an offending (ie 0) value between the current pos and the last pos
+        # then this movement is not contigious
+        # store away endpos, start new start chunk
+        endpos = c(endpos, rowPos[q-1])
+        startpos = c(startpos, rowPos[q])
+      }
+    }
+    endpos = c(endpos, rowPos[q])
+    
+    
+    # what is duration for each windows of activity
+    allowancewin = endpos-startpos
+    
+    # for each window of activity, find out if this is a real window of activity, 
+    # and therefore, wearing, or is it an artifact, and therefore, nonwearing
+    # Algorithm;  eliminate the windows of activity that fulfill the criteria for not wearing
+    # that is, long enough, and also, no activity on BOTH sides, streamframe distance, of the activity 
+    for(r in 1:length(allowancewin))
+    {
+      # if this chunk was smaller in size that the allowable size
+      if(allowancewin[r] < allowanceFrame)
+      {
+        #upstream - is there activity prior to this allowable frame?
+        usStart = startpos[r] - streamFrame
+        usEnd = startpos[r] - 1
+        if(usStart <=0) {usStart = 1}
+        if(usEnd <= 0)  {usStart = 1}
+        
+        # if we are at the start, we were obvisiously non wearing
+        if(usEnd-usStart == 0){
+          usSignal = "nowearing"
+        }else {
+          
+          # if there is at least one movement value in the upstream window
+          if(sum(ct_bool[usStart:usEnd]) >0){
+            usSignal = "wearing"
+          }else {
+            usSignal = "nowearing"    
+          }
+        }
+        
+        #downstream
+        # is there activity after to this allowable frame?
+        
+        dsEnd = endpos[r] + streamFrame
+        dsStart = endpos[r] + 1
+        if(dsEnd >size)
+        {dsEnd = size}
+        if(dsStart > size)
+        {dsStart = size}
+        if(dsEnd-dsStart == 0){
+          dsSignal = "nowearing"
+        }else {
+          if(sum(ct_bool[dsStart:dsEnd]) >0){
+            dsSignal = "wearing"
+          }else {
+            dsSignal = "nowearing"    
+          }
+        }  
+        
+        if(usSignal == "nowearing" & dsSignal == "nowearing")
+          # we had movement on BOTH sides of the frame, so, this allowable movement window
+          # must have been real movement.  Throw it away
+        {
+          startpos[r] = -1
+          endpos[r] = -1
+        }      
+      }#end of if/allowancewin
+    }#end of for/r
+    
+    # get rid of all the segments disallowed above
+    startpos = startpos[startpos != -1]
+    endpos = endpos[endpos!=-1]
+    #end of ele3
+    
+    #now get the non-wearing gap
+    #frame is the gap allowed between time section.  ie if 90 minutes allowed
+    #between two wearing sections, them frame = 90
+    gap = startpos[-1] - endpos[1:length(endpos)-1]
+    endgap = endpos[1:length(gap)]
+    startgap = startpos[-1]
+    endgap[gap<= frame] = NA
+    startgap [gap <= frame] = NA
+    startgap = c(startpos[1], startgap)
+    endgap = c(endgap, endpos[length(gap)+1])
+    
+    newstartpos = startgap[!is.na(startgap)]
+    newendpos = endgap[!is.na(endgap)]
+    
+    for(w in 1: length(newendpos)){
+      wearing[newstartpos[w]:newendpos[w]] = "w"
+    }
+    
+    tlen= length(wearing)
+    wearing[tlen] = wearing[tlen-1]
+    
+    wearing[is.na(ct1)] = NA
+    
+    oldnames = names(dataset)
+    rst = cbind(dataset, wearing = wearing)
+    names(rst) = c(oldnames, newColName)
+    return(rst)
+  }
 ################################################################################
 `nthOccurance` <-
   function(dataVct, value, nth = NA, reverse = FALSE)
@@ -349,8 +512,7 @@ plotData = function (data, day = NULL, start = 1, end = NULL)
     n <- length(data[, 1])
     mm <- 0
     for (i in 1:(n - 1)) {
-      mm <- c(mm, ifelse(data$days[i] == data$days[i + 
-                                                     1], 0, 1))
+      mm <- c(mm, ifelse(data$days[i] == data$days[i +  1], 0, 1))
     }
     
     data.midnight <- data[mm == 1, ]
@@ -384,7 +546,7 @@ plotData = function (data, day = NULL, start = 1, end = NULL)
 
 ################################################################################
 ################################################################################
-readCountsDataRT3 = function (filename) 
+readCountsDataRT3 = function (filename="", dateFormat="%d/%m/$Y") 
 {
   Tfile <- file(filename, "r")
   if (isOpen(Tfile, "r")) {
@@ -399,24 +561,75 @@ readCountsDataRT3 = function (filename)
   startline = skipPos + 1
   endline = length(lines)
   rawdata = c()
+  rst = c()
+  pb <- txtProgressBar(max=endline)
+  rvct=vector(mode="integer", length=(endline-startline+1))
+  rvdt=vector(mode="character", length=(endline-startline+1))
   for (i in startline:endline) {
-    rawdata = c(rawdata, strsplit(lines[i], ",") [[1]][6])
+    setTxtProgressBar(pb, i)
+    line = strsplit(lines[i], ",") [[1]]
+    rvct[i-startline+1] = as.integer(line[[6]])
+    ts = gsub('"','', line[[2]])
+    time=strsplit(line[[3]], ":")
+    ts = paste(ts, paste(sprintf(fmt="%02d", as.integer(time[[1]])), collapse=":"), sep=" " )
+    rvdt[i-startline+1] = ts 
   }
-  timeline = rep(0:as.integer(length(rawdata)-1))*60
-  rst = timeline + as.POSIXlt(startTime, tz="", "%m/%d/%Y %H:%M:%s")
-  data.frame(TimeStamp = rst, counts = as.numeric(as.vector(rawdata)))
+  close(pb)
+  #timeline = rep(0:as.integer(length(rawdata)-1))*60
+  #rst = timeline + as.POSIXlt(startTime, tz="", "%m/%d/%Y %H:%M:%s")
+  dtFormat = paste(dateFormat, "%H:%M:%S")
+  if( is.na(as.POSIXlt(rvdt,format=dtFormat)[1])) {
+    cat(filename)
+    cat("ERROR")
+    cat(dtFormat)
+    cat(rvdt[1])
+  }
+  data.frame(TimeStamp = as.POSIXlt(rvdt,format=dtFormat)
+                                    , counts = rvct)
 }
 
 
 ################################################################################
 ################################################################################
+wearingMarking = function (dataset, frame = 90, perMinuteCts = 60, TS = "TimeStamp", 
+                           cts = "counts", streamFrame = NULL, allowanceFrame = 2, newColName = "wearing", 
+                           getMinuteMarking = FALSE, dayStart = "00:00:00", dayEnd = "23:59:59", 
+                           ...) 
+{
+  if (perMinuteCts != 1) {
+    data2 = dataCollapser(dataset, TS = TS, by = 60, col = cts)
+  }
+  else {
+    data2 = dataset
+  }
+  
+  data3 = marking(data2, frame = frame, cts = cts, streamFrame = streamFrame, 
+                  allowanceFrame = allowanceFrame, newColName = newColName)
+  
+  
+  colName = names(data3)
+  if (!getMinuteMarking) {
+    dataset$key = substring(dataset[, names(dataset)[TS == 
+                                                       names(dataset)]], 1, 16)
+    data3$key = substring(data3[, names(data3)[TS == names(data3)]], 
+                          1, 16)
+    data4 = merge(dataset, data3[c(newColName, "key")], all.x = TRUE, 
+                  by = "key")[c(colName)]
+  }
+  else {
+    data4 = data3[c(colName)]
+  }
+  data4$weekday = weekdays(data4[, TS])
+  markDays(data4, TS, dayStart, dayEnd)
+}
+
 
 
 
 # process read in a single RT3 file
 # Compliant if XXX
 # add in columns isWearing, isCompliant, and day
-`markCompliant` <- function(fileName, 
+`markCompliant` <- function(csv, filename,
                             minuteThreshold=600 # number of minutes for a day to be compliant
                             ,
                             frame=60
@@ -424,19 +637,19 @@ readCountsDataRT3 = function (filename)
                             allowanceFrame=3  # number of minutes allowed
                             ,
                             dayThreshold=4
-                            ,
-                            weekendDayThreshold =1
                             ) {
-
-  csv=readCountsDataRT3(fileName)
-  csv$day = markDays(csv)
-  csv$isWeekEnd=(format(csv$TimeStamp, "%u")>=6)
-
+  # path - the path to the file to process
   row=list()
-  row$filename=fileName
+  row$filename=filename
+  #csv=readCountsDataRT3(fileName)
+  csv=markDays(csv)
+  csv$isWeekEnd=(format(csv$TimeStamp, "%u")>=6)
+  
+  row$FirstReading=format(min(csv$TimeStamp), "%d/%m/%y")
+  row$LastReading=format(max(csv$TimeStamp), "%d/%m/%y")
   row$DaysOnRecord=max(csv$day)
   row$MinutesOnRecord=length(csv[,1])
-  row$TotalCompliantDays=0 
+  row$TotalCompliantDays=0
   row$CompliantWeekendDays  = 0
   row$NumberActiveMinutes =  0
   row$totalActiveVM =  0
@@ -447,29 +660,26 @@ readCountsDataRT3 = function (filename)
     row$isCompliant	= FALSE
     return(row)
   }
-  csv=markWearing(csv, frame=frame, allowanceFrame=allowanceFrame)
+  csv=markWearingNora(csv, frame=frame, allowanceFrame=allowanceFrame)
+  wcsv = csv[csv$isWearing & csv$day>1,] # wearing values only and > first day
   
-  # calculate # of wearing minutes / day and if this day a weekend
-  dayTotals=ddply(
-    subset( csv, subset=csv$isWearing & csv$day>1),
-    .(day), summarise, totCount=length(day), isWeekEnd=min(isWeekEnd)
-  )
+  # # of wearing minutes / day
+  dayTotals=ddply(wcsv, ~day, summarise, totCount=length(day), isWeekEnd=min(isWeekEnd))
   compliantDays=dayTotals[dayTotals$totCount>=minuteThreshold,]$day
-  
-  # mark all the minutes to say if they are a compliant day
   csv$isCompliant=csv$day %in% compliantDays
-
-  # the number of compliant days, and compliant weekend days  
+  
+  
+  
   row$TotalCompliantDays=sum( dayTotals$totCount>=minuteThreshold )
   row$CompliantWeekendDays  = sum( dayTotals$totCount>=minuteThreshold & dayTotals$isWeekEnd)
-  
-  # is this entire data file compliant?
-  if( ( row$TotalCompliantDays >=dayThreshold & row$CompliantWeekendDays > weekendDayThreshold)) {
+  if( ( row$TotalCompliantDays >=dayThreshold & row$CompliantWeekendDays >0)) {
     row$isCompliant  = TRUE
   } else {
-    row$isCompliant= FALSE
+    row$isCompliant	= FALSE
   }
-  
+  row$NumberActiveMinutes =  sum( csv$isWearing & csv$isCompliant)
+  row$totalActiveVM =	sum(csv[ csv$isWearing & csv$isCompliant, ]$counts)
+  row$AverageVM =  row$totalActiveVM / row$NumberActiveMinutes
   row$csv = csv
   return (row)
 }
