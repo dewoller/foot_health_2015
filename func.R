@@ -8,8 +8,7 @@ library(plyr)
 
 `activeBlock` <-
   function(dataset, 
-           activityLevelBottom,
-           activityLevelTop=9999999999
+           activityLevelBottom
            ,
            frame = 10
            ,
@@ -546,7 +545,9 @@ plotData = function (data, day = NULL, start = 1, end = NULL)
 
 ################################################################################
 ################################################################################
-readCountsDataRT3 = function (filename="", dateFormat="%d/%m/$Y") 
+readCountsDataRT3 = function (filename="", 
+                              dateFormat="%d/%m/%Y"
+                              ) 
 {
   Tfile <- file(filename, "r")
   if (isOpen(Tfile, "r")) {
@@ -565,25 +566,49 @@ readCountsDataRT3 = function (filename="", dateFormat="%d/%m/$Y")
   pb <- txtProgressBar(max=endline)
   rvct=vector(mode="integer", length=(endline-startline+1))
   rvdt=vector(mode="character", length=(endline-startline+1))
+  firstDatePart=vector(mode="integer", length=(endline-startline+1))
+  secondDatePart=vector(mode="integer", length=(endline-startline+1))
   for (i in startline:endline) {
+    pos = i - startline + 1
     setTxtProgressBar(pb, i)
-    line = strsplit(lines[i], ",") [[1]]
-    rvct[i-startline+1] = as.integer(line[[6]])
-    ts = gsub('"','', line[[2]])
-    time=strsplit(line[[3]], ":")
-    ts = paste(ts, paste(sprintf(fmt="%02d", as.integer(time[[1]])), collapse=":"), sep=" " )
-    rvdt[i-startline+1] = ts 
+    line = gsub('"','',strsplit(lines[i], ",") [[1]])
+    if (length( line ) == 8 ) {
+      rvct[ pos ] = as.integer(line[[6]])
+      ts = stringr::str_replace_all( line[[2]], "-", "/" )
+      parts = strsplit( ts, "/")[[1]]
+      firstDatePart[ pos ] = parts[1]
+      secondDatePart[ pos ] = parts[2]
+      time=strsplit(line[[3]], ":")
+      ts = paste(ts, paste(sprintf(fmt="%02d", as.integer(time[[1]])), collapse=":"), sep=" " )
+      rvdt[ pos ] = ts 
+    }
   }
   close(pb)
+  cat("done")
   #timeline = rep(0:as.integer(length(rawdata)-1))*60
   #rst = timeline + as.POSIXlt(startTime, tz="", "%m/%d/%Y %H:%M:%s")
-  dtFormat = paste(dateFormat, "%H:%M:%S")
-  if( is.na(as.POSIXlt(rvdt,format=dtFormat)[1])) {
-    cat(filename)
-    cat("ERROR")
-    cat(dtFormat)
-    cat(rvdt[1])
+  if (length(unique( firstDatePart)) < length(unique( secondDatePart)))  {
+                              dateFormat="%m/%d/%Y"
+  } else {
+                              dateFormat="%d/%m/%Y"
   }
+    
+  dtFormat = paste(dateFormat, "%H:%M:%S")
+  
+  if( is.na(as.POSIXlt(rvdt,format=dtFormat)[1])) {
+    cat("\n")
+    cat(filename)
+    cat("\n")
+    cat("ERROR")
+    cat("\n")
+    cat(dtFormat)
+    cat("\n")
+    cat(rvdt[1])
+    cat("\n")
+    stop("Error")
+    
+  }
+  # create a data frame with 2 columns, TimStamp and counts 
   data.frame(TimeStamp = as.POSIXlt(rvdt,format=dtFormat)
                                     , counts = rvct)
 }
@@ -656,8 +681,9 @@ wearingMarking = function (dataset, frame = 90, perMinuteCts = 60, TS = "TimeSta
   row$AverageVM =  0
   row$csv = csv
   if (length(csv[csv$counts<10,1])==0) {
-    print(paste("ERROR:", fileName))
+    cat(paste("ERROR:", fileName, "\n"))
     row$isCompliant	= FALSE
+    stop
     return(row)
   }
   csv=markWearingNora(csv, frame=frame, allowanceFrame=allowanceFrame)

@@ -1,6 +1,6 @@
 library(plyr)
 ################################################################################
-source("func.R")
+
 
 
 instructions="
@@ -26,7 +26,7 @@ Then we would re-run this for each eligible day of data collection
   we can discard the very first day of data collection as it is unlikely to be a 
   full days data anyway and was designed as a familiarisation day). 
   so for each participant we would have a line in an excel spreadsheet with 
-  headings sometime like what Ive attached to this email. 
+  headings sometime like what I've attached to this email. 
 
 When we have the data per day, 
 we can then calculate the average per day 
@@ -52,26 +52,45 @@ total value and 10 minute bouts
 #############################################################################
 
 "
+#############################################################################
+getFiles = function( 
+			   path = "data/"
+			   , 
+			   pattern = '*.csv'
+			   , 
+			   searchPattern="^([A-Z]+)_.*"
+			   ) {
+    files =data.frame(list.files( path, pattern));
+    names(files)=c("filename");
+    files$base = gsub(searchPattern, "\\1", files$filename);
+    files$fullPath= paste(path, files$filename, sep="");
+    files
+} 
+
 processFilesNora = function(
-  basePath="~/mydoc/research/noraShields/projects/for_tech/"
+  basePath="/mnt/raid/home/dewoller/mydoc/research/noraShields/projects/foot_health_2015/data/"
   ,
-  fileNameCSV="files2Process.csv"
+  fileNameCSV=""
   ,
   defaultDateFormat="%m/%d/%Y"
   ) {
   rv=list()
   
-  
-  files=read.csv(paste(basePath, fileNameCSV, sep=""),stringsAsFactors=FALSE, header=FALSE, col.names=c("filename"))
- 
+  if (fileNameCSV == "") { 
+    files = data.frame(list.files(basePath, "*.csv"))
+    names(files) = c("filename")
+  } else {
+    files=read.csv(paste(basePath, fileNameCSV, sep=""),stringsAsFactors=FALSE)
+  }
   files$base=files$filename
   files$chunk=files$filename
   files$fullPath=paste(basePath, files$filename, sep="")
-  thresholds=c(247,275,302,832,926,1018)
+  #thresholds=c(247,275,302,832,926,1018)
+  thresholds=c(0, 52,1389, 2448)
   peopleRows=list()
   dayDetails=data.frame()
   for(i in 1:length(files[,1])){
-    print(paste("processing row",i,files[i,]$fullPath))
+    cat(paste("processing row",i,files[i,]$fullPath, "\n"))
     # process this file
     df = defaultDateFormat
     if ("Reverse" %in% names(files)) {
@@ -84,15 +103,15 @@ processFilesNora = function(
     csv = readCountsDataRT3(files[i,]$fullPath , df )
     fileRow= markCompliant(csv, files[i,]$fullPath)
     fileRow$fileIndex=i  
-    fileRow$filename=files[i,]$filename
+    fileRow$filename=as.character( files[i,]$filename)
     peopleRows=rbind(peopleRows, fileRow)
     if(!fileRow$isCompliant)
       next
     baseDataset=fileRow$csv
     for(j in 1: length(thresholds)){
-      print(paste("Threshold", thresholds[j]))
+      cat(paste("Threshold", thresholds[j], "\n"))
       # find all active blocks
-      dataset=activeBlock(baseDataset, thresholds[j], frame=10, cts="counts", 
+      dataset=activeBlock(baseDataset, activityLevelBottom=thresholds[j], frame=10, cts="counts", 
                           allowanceFrame=2, newColNameIsBlock="isBlock")
       blocksPerDay=ddply(dataset[dataset$isBlock & 
                                   dataset$isCompliant & 
@@ -208,7 +227,9 @@ processFilesStaceyCarlon= function(
 #############################################################################
 
 write.csv.Nora = function(rv, basename ) {
-  write.csv( rv$peopleRows[,which(!grepl("csv",colnames(a$peopleRows)))], paste(basename, "Summary.csv",sep=""))
+write.csv( rv$peopleRows[,which(!grepl("csv",colnames(rv$peopleRows)))], 
+           paste(basename, "Summary.csv",sep=""))
+
   write.csv( rv$dayDetails, paste(basename, "Details.csv",sep=""))
 }
   
