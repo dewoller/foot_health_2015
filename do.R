@@ -1,4 +1,6 @@
+rm(list=ls())
 library(plyr)
+source("func.R")
 ################################################################################
 
 
@@ -6,8 +8,7 @@ library(plyr)
 instructions="
 
 The issue with the way we summarised the data before is that we do not
-calculate a per day amount of time unless we go back and manually count the lines per day. 
-So I'd like to be able for every eligible day's data to measure 
+calculate a per ourable for every eligible day's data to measure 
 (1) the total amount of minutes the person spent in 
     moderate or vigorous level physical activity and 
 (2) the amount of time spent in moderate or vigorous level physical activity 
@@ -68,7 +69,8 @@ getFiles = function(
 } 
 
 processFilesNora = function(
-  basePath="/mnt/raid/home/dewoller/mydoc/research/noraShields/projects/foot_health_2015/data/"
+#  basePath="/mnt/raid/home/dewoller/mydoc/research/noraShields/projects/foot_health_2015/data/",
+  basePath="/tmp/a/"
   ,
   fileNameCSV=""
   ,
@@ -89,7 +91,7 @@ processFilesNora = function(
   thresholds=c(0, 52,1389, 2448)
   peopleRows=list()
   dayDetails=data.frame()
-  for(i in 1:length(files[,1])){
+  for(i in 1:length(files[,1])){i
     cat(paste("processing row",i,files[i,]$fullPath, "\n"))
     # process this file
     df = defaultDateFormat
@@ -108,6 +110,7 @@ processFilesNora = function(
     if(!fileRow$isCompliant)
       next
     baseDataset=fileRow$csv
+    cat(paste("checking thresholds\n"))
     for(j in 1: length(thresholds)){
       cat(paste("Threshold", thresholds[j], "\n"))
       # find all active blocks
@@ -118,7 +121,9 @@ processFilesNora = function(
                                    dataset$isWearing,], .(day), nrow)
       
       # check to make sure we got some data.  
+      cat(paste( 'Checking for 10 minute data ', length(blocksPerDay[,1]), "\n"))
       if(length(blocksPerDay[,1]) > 0) {
+        cat(paste( 'we have 10 minute data for ', length(blocksPerDay[,1]), "\n"))
         # add some more descriptive columns onto this
         blocksPerDay=cbind(blocksPerDay, 
                            files[i,]$chunk,
@@ -190,7 +195,7 @@ processFilesStaceyCarlon= function(
       next
     baseDataset=fileRow$csv
     for(j in 1: length(thresholds)){
-      print(paste("Threshold", thresholds[j]))
+      cat(paste("Threshold", thresholds[j], "\n"))
       # find all active blocks
       thisDataset=activeBlock(baseDataset, activityLevelBottom=thresholds[j], frame=10, cts="counts", 
                           allowanceFrame=2, newColName="isBlock")

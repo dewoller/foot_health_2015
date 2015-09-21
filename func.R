@@ -5,10 +5,11 @@ library(plyr)
 ################################################################################
 # find a block >= than frame length that has activity higher than activity level
 # add a column into dataset with newColName containing a b where this block is true
+# it makes no sense to have 10 minute blocks of > 0, becasue everything is >0
 
 `activeBlock` <-
   function(dataset, 
-           activityLevelBottom
+           activityLevelBottom=0
            ,
            frame = 10
            ,
@@ -584,7 +585,7 @@ readCountsDataRT3 = function (filename="",
     }
   }
   close(pb)
-  cat("done")
+  cat("done\n")
   #timeline = rep(0:as.integer(length(rawdata)-1))*60
   #rst = timeline + as.POSIXlt(startTime, tz="", "%m/%d/%Y %H:%M:%s")
   if (length(unique( firstDatePart)) < length(unique( secondDatePart)))  {
