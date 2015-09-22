@@ -662,7 +662,8 @@ wearingMarking = function (dataset, frame = 90, perMinuteCts = 60, TS = "TimeSta
                             , 
                             allowanceFrame=3  # number of minutes allowed
                             ,
-                            dayThreshold=4
+                            dayThreshold=4  ,
+                            isCompliantNeedWeekend=TRUE
                             ) {
   # path - the path to the file to process
   row=list()
@@ -699,7 +700,8 @@ wearingMarking = function (dataset, frame = 90, perMinuteCts = 60, TS = "TimeSta
   
   row$TotalCompliantDays=sum( dayTotals$totCount>=minuteThreshold )
   row$CompliantWeekendDays  = sum( dayTotals$totCount>=minuteThreshold & dayTotals$isWeekEnd)
-  if( ( row$TotalCompliantDays >=dayThreshold & row$CompliantWeekendDays >0)) {
+  if( ( row$TotalCompliantDays >=dayThreshold) 
+      &  ((row$CompliantWeekendDays >0) | (!isCompliantNeedWeekend))) {
     row$isCompliant  = TRUE
   } else {
     row$isCompliant	= FALSE

@@ -75,6 +75,8 @@ processFilesNora = function(
   fileNameCSV=""
   ,
   defaultDateFormat="%m/%d/%Y"
+  ,
+  isCompliantNeedWeekend=TRUE
   ) {
   rv=list()
   
@@ -103,7 +105,7 @@ processFilesNora = function(
       }
     }
     csv = readCountsDataRT3(files[i,]$fullPath , df )
-    fileRow= markCompliant(csv, files[i,]$fullPath)
+    fileRow= markCompliant(csv, files[i,]$fullPath, isCompliantNeedWeekend=isCompliantNeedWeekend)
     fileRow$fileIndex=i  
     fileRow$filename=as.character( files[i,]$filename)
     peopleRows=rbind(peopleRows, fileRow)
@@ -112,7 +114,7 @@ processFilesNora = function(
     baseDataset=fileRow$csv
     cat(paste("checking thresholds\n"))
     for(j in 1: length(thresholds)){
-      cat(paste("Threshold", thresholds[j], "\n"))
+      #cat(paste("Threshold", thresholds[j], "\n"))
       # find all active blocks
       dataset=activeBlock(baseDataset, activityLevelBottom=thresholds[j], frame=10, cts="counts", 
                           allowanceFrame=2, newColNameIsBlock="isBlock")
@@ -121,9 +123,9 @@ processFilesNora = function(
                                    dataset$isWearing,], .(day), nrow)
       
       # check to make sure we got some data.  
-      cat(paste( 'Checking for 10 minute data ', length(blocksPerDay[,1]), "\n"))
+      #cat(paste( 'Checking for 10 minute data ', length(blocksPerDay[,1]), "\n"))
       if(length(blocksPerDay[,1]) > 0) {
-        cat(paste( 'we have 10 minute data for ', length(blocksPerDay[,1]), "\n"))
+        #cat(paste( 'we have 10 minute data for ', length(blocksPerDay[,1]), "\n"))
         # add some more descriptive columns onto this
         blocksPerDay=cbind(blocksPerDay, 
                            files[i,]$chunk,
